@@ -42,14 +42,29 @@ static OSStatus audio_play_proc(AudioDeviceID inDevice,
                                 AudioBufferList *outOutputData,
                                 const AudioTimeStamp *inOutputTime,
                                 void *inClientData) {
-  printf("play_proc\n");
-  int ret;
-  float *buf = (float *)outOutputData;
-  ret = rb_dequeue(&audio.rb, buf, 1152 * 2);
-  if (ret == 0)
-    memset(buf, 0, 1152 * 2 * sizeof(float));
-  else
-    printf("Could dequeue\n");
+  int i;
+  for(i = 0; i < outOutputData->mNumberBuffers; i++) {
+    AudioBuffer *buffer = outOutputData->mBuffers + i;
+
+    /*
+      printf("handling data %d, size %d, channels %d\n",
+      i, buffer->mDataByteSize / sizeof(float),
+      buffer->mNumberChannels);
+    */
+
+    if ((buffer->mDataByteSize / sizeof(float)) != (1152 * 2)) {
+      printf("Incorrect buffer size: %d\n", buffer->mDataByteSize / sizeof(float));
+      continue;
+    }
+
+    int ret;
+    ret = rb_dequeue(&audio.rb, buffer->mData, 1152 * 2);
+    if (ret == 0) {
+      printf("Could not dequeue\n");
+      memset(buffer->mData, 0, 1152 * 2 * sizeof(float));
+    }
+  }
+
   return 0;
 }
 
@@ -168,11 +183,10 @@ int audio_write(struct mad_pcm *pcm, error_t *error) {
   if (ret == 0) {
     error_set(error, "Could not enqueue the PCM samples");
     return 0;
-  } else {
-    printf("enqueue %d samples\n", pcm->length);
   }
 
   if (!audio_started) {
+    printf("start audio\n");
     ret = AudioDeviceStart(audio.device, audio_play_proc);
     if (ret) {
       error_set(error, "Could not start the audio playback");
