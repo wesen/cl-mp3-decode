@@ -3,7 +3,11 @@ LDFLAGS += -L/usr/local/lib
 
 CFLAGS += -Wall -g
 
-all: libmp3dec.a libmaddec.a mp3dec maddec
+all: libmp3dec.so libmp3dec.a libmaddec.a mp3dec maddec
+
+libmp3dec.so: mp3dec.c
+	$(CC) $(CFLAGS) -fPIC -c -o libmp3dec.o mp3dec.c
+	ld $(LDFLAGS) -lm -lmp3lame -shared libmp3dec.o -o libmp3dec.so
 
 libmp3dec.a: mp3dec.o
 	ar r $@ mp3dec.o
