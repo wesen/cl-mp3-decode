@@ -2,6 +2,6 @@
 #define AUDIO_H__
 
 int  audio_write(struct mad_pcm *pcm, error_t *error);
-void audio_close(void);
+int audio_close(error_t *error);
 
 #endif /* AUDIO_H__ */

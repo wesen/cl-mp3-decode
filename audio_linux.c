@@ -137,10 +137,12 @@ int audio_write(struct mad_pcm *pcm, error_t *error) {
   }
 }
 
-void audio_close(void) {
+int audio_close(error_t *error) {
   if (audio.snd_fd != -1)
     close(audio.snd_fd);
   audio.snd_fd = -1;
   audio_initialized = 0;
+
+  return 1;
 }
 

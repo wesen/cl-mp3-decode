@@ -11,30 +11,27 @@
 #include <CoreAudio/AudioHardware.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <semaphore.h>
+#include <string.h>
 
 #include <mad.h>
 
+#include "audio_macosx_rb.h"
 #include "error.h"
 #include "audio.h"
 
 #define AUDIO_BUFFER_SIZE 1152 * 2
 
-typdef struct audio_buffer_s {
-  floar *ptr;
-} audio_buffer_t;
-
 typedef struct audio_s {
   AudioDeviceID device;
-  pthread_mutex_t mutex;
-  pthread_cond_t  cond;
 
-  float buffer[AUDIO_BUFFER_SIZE];
-  unsigned long buffer_count;
-  unsigned long buffer_start;
+  unsigned long channels;
+  unsigned long samplerate;
+  
+  rb_t rb;
 } audio_t;
 
 static audio_t audio;
+static int audio_initialized = 0;
 
 /* audio_play_proc has to be thread safe */
 static OSStatus audio_play_proc(AudioDeviceID inDevice,
@@ -44,33 +41,16 @@ static OSStatus audio_play_proc(AudioDeviceID inDevice,
                                 AudioBufferList *outOutputData,
                                 const AudioTimeStamp *inOutputTime,
                                 void *inClientData) {
-  pthread_mutex_lock(&audio.mutex);
-
-  float *out_ptr = (float *)outOutputData;
-  float *in_ptr  = (float *)audio.buffer + audio.buffer_start;
-  unsigned long bytes_left = sizeof(audio.buffer);
-  /* not enough data, wait... */
-  if (audio.buffer_count < bytes_left) {
-    memset(ptr, 0, bytes_left);
-    pthread_mutex_unlock(&audio.mutex);
-    return 0;
-  }
-
-  bytes_left = min(bytes_left, audio.buffer_count);
-  unsigned long samples_left = bytes_left / sizeof(*in_ptr);
-
-  while (samples_left--) {
-    *out_ptr++ = mad_scale_float(*in_ptr++);
-  }
-
-  pthread_cond_signal(&audio.cond);
-  pthread_mutex_unlock(&audio.mutex);
-
+  int ret;
+  float *buf = (float *)outOutputData;
+  ret = rb_dequeue(&audio.rb, buf, 1152 * 2);
+  if (ret == 0)
+    memset(buf, 0, 1152 * 2 * sizeof(float));
   return 0;
 }
 
 static int audio_init(error_t *error) {
-  int size;
+  UInt32 size;
   int ret;
   AudioStreamBasicDescription format;
   UInt32 byte_count;
@@ -83,7 +63,7 @@ static int audio_init(error_t *error) {
     error_set(error, "Could not get default audio device");
     return 0;
   }
-  if (device == kAudioDeviceUnknown) {
+  if (audio.device == kAudioDeviceUnknown) {
     error_set(error, "Unknown audio device");
     return 0;
   }
@@ -102,33 +82,102 @@ static int audio_init(error_t *error) {
     return 0;
   }
 
-  /* set the buffer size */
+  /* set the buffer size, channels, samplerate */
+  /* XXX channels, samplerate */
   size = sizeof(byte_count);
   ret = AudioDeviceGetProperty(audio.device, 0, false,
                                kAudioDevicePropertyBufferSize,
                                &size, &byte_count);
   if (ret) {
-    error_set("Could not get the buffer size");
+    error_set(error, "Could not get the buffer size");
+    return 0;
+  }
+  byte_count = 1152 * 2 * sizeof(float);
+  ret = AudioDeviceSetProperty(audio.device, NULL, 0, false,
+                               kAudioDevicePropertyBufferSize,
+                               size, &byte_count);
+  if (ret) {
+    error_set(error, "Could not set the buffer size");
     return 0;
   }
 
-  ret = pthread_mutex_init(&audio.mutex, NULL);
-  if (ret) {
-    error_set("Could not initialize mutex");
-    return 0;
-  }
-  ret = pthread_cond_init(&audio.cond, NULL);
-  if (ret) {
-    error_set("Could not initialize condition variable");
-    return 0;
-  }
-
+  /* initialize the ring buffer */
+  rb_init(&audio.rb);
+  
   ret = AudioDeviceAddIOProc(audio.device, audio_play_proc, NULL);
   if (ret) {
-    error_set("Could not start the IO proc");
+    error_set(error, "Could not start the IO proc");
     return 0;
   }
+
+  audio_initialized = 1;
+
+  return 1;
+}
+
+static inline
+float mad_scale_float(mad_fixed_t sample) {
+  return (float)(sample/(float)(1L << MAD_F_FRACBITS));
 }
 
 int audio_write(struct mad_pcm *pcm, error_t *error) {
+  if (!audio_initialized) {
+    audio.channels = pcm->channels;
+    audio.samplerate = pcm->samplerate;
+    if (!audio_init(error)) {
+      error_prepend(error, "Could not initialize audio");
+      return 0;
+    }
+  }
+
+  if ((audio.channels != pcm->channels) ||
+      (audio.samplerate != pcm->samplerate)) {
+    /* XXX */
+    error_set(error, "Changing the audio parameters is not supported");
+    return 0;
+  }
+
+  if (pcm->length != 1152) {
+    error_set(error, "Unknown number of samples in the mad buffer");
+    return 0;
+  }
+
+  if (pcm->channels != 2) {
+    error_set(error, "Only stereo PCM data supported");
+    return 0;
+  }
+
+  int ret;
+  float buf[1152 * pcm->channels];
+  float *ptr = buf;
+  int i;
+  mad_fixed_t const *left_ch, *right_ch;
+  left_ch  = pcm->samples[0];
+  right_ch = pcm->samples[1];
+  for (i = 0; i < sizeof(buf); i++) {
+    *ptr++ = mad_scale_float(*left_ch++);
+    *ptr++ = mad_scale_float(*right_ch++);
+  }
+  ret = rb_enqueue(&audio.rb, buf, sizeof(buf));
+
+  if (ret == 0) {
+    error_set(error, "Could not enqueue the PCM samples");
+    return 0;
+  } else {
+    return 1;
+  }
+}
+
+int audio_close(error_t *error) {
+  int ret;
+  if (audio_initialized) {
+    ret = AudioDeviceRemoveIOProc(audio.device, audio_play_proc);
+    if (ret) {
+      error_set(error, "Could not remove the IOProc");
+      return 0;
+    }
+  }
+  rb_destroy(&audio.rb);
+
+  return 0;
 }

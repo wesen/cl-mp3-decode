@@ -74,7 +74,7 @@ static void mp3dec_child_close(child_state_t *state) {
     state->mad_initialized = 0;
   }
 
-  audio_close();
+  audio_close(&state->error);
   
   if (state->mp3_fd != -1) {
     close(state->mp3_fd);
@@ -113,11 +113,6 @@ signed int mad_scale(mad_fixed_t sample)
 
   /* quantize */
   return sample >> (MAD_F_FRACBITS + 1 - 16);
-}
-
-static inline
-float mad_scale_float(mad_fixed_t sample) {
-  return (float)(sample/(float)(1L << MAD_F_FRACBITS));
 }
 
 static
