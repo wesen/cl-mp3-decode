@@ -5,12 +5,14 @@ CFLAGS += -Wall -g
 
 all: libmaddec.a maddec
 
+MADDEC_OBJS := misc.o error.o maddec.o child.o
+
 libmaddec.so: maddec.c
 	$(CC) $(CFLAGS) -fPIC -c -o libmaddec.o maddec.c
 	ld $(LDFLAGS) -lm -lmp3lame -shared libmaddec.o -o libmaddec.so
 
-libmaddec.a: maddec.o
-	ar r $@ maddec.o
+libmaddec.a: $(MADDEC_OBJS)
+	ar r $@ $(MADDEC_OBJS)
 
 maddec: main.o libmaddec.a
 	$(CC) -g -o $@ main.o $(LDFLAGS) -L. -lmaddec -lmad -lm

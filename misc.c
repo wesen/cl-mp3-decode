@@ -1,4 +1,8 @@
+#include <sys/poll.h>
 #include <sys/types.h>
+
+#include <assert.h>
+#include <string.h>
 #include <unistd.h>
 #include <errno.h>
 
@@ -59,13 +63,33 @@ int unix_write(int fd, unsigned char *buf, unsigned int len) {
   return total;
 }
 
-#define BUF_SIZE 256
+int unix_check_fd_read(int fd) {
+  struct pollfd pfd[1];
+  int ret;
+  
+  pfd[0].fd = fd;
+  pfd[0].events = POLLIN | POLLERR;
+  pfd[0].revents = 0;
 
-int mp3dec_write_cmd(int fd, mp3dec_cmd_e cmd, void *data, unsigned int len, mp3dec_error_t *error) {
+  ret = poll(pfd, 1, 0);
+  if (ret < 0)
+    return ret;
+  if ((pfd[0].revents & POLLIN) ||
+      (pfd[0].revents & POLLERR))
+    return 1;
+  else
+    return 0;
+}
+
+int mp3dec_write_cmd(int fd, mp3dec_cmd_e cmd,
+		     void *data, unsigned int len,
+		     mp3dec_error_t *error) {
   unsigned char buf[CMD_BUF_SIZE];
   unsigned char *ptr = buf;
-  if (len > BUF_SIZE - 3) {
-    
+  unsigned int cmd_len = 0;
+  
+  if (len > sizeof(buf) - 3) {
+    mp3dec_error_set(error, "Data buffer is too big for a command");
     return -1;
   }
   
@@ -76,42 +100,53 @@ int mp3dec_write_cmd(int fd, mp3dec_cmd_e cmd, void *data, unsigned int len, mp3
     memcpy(ptr, data, len);
     ptr += len;
   }
-
-  len = ptr - buf;
-  if (unix_write(fd, buf, len) != len) {
-    fprintf(stderr, "Could not write command\n");
+  cmd_len = ptr - buf;
+  if (unix_write(fd, buf, cmd_len) != cmd_len) {
+    mp3dec_error_set_strerror(error, "Could not write command to pipe");
     return -1;
   }
 
   return 0;
 }
 
-int read_cmd(int fd, cmd_e *cmd, void *data, unsigned int *len, unsigned int max_len) {
-  unsigned char buf[BUF_SIZE];
+int mp3dec_write_cmd_string(int fd, mp3dec_cmd_e cmd, char *string, mp3dec_error_t *error) {
+  return mp3dec_write_cmd(fd, cmd, string, strlen(string) + 1, error);
+}
+
+int mp3dec_read_cmd(int fd, mp3dec_cmd_e *cmd,
+		    void *data, unsigned int *len, unsigned int max_len,
+		    mp3dec_error_t *error) {
+  unsigned char buf[CMD_BUF_SIZE];
   unsigned char *ptr = buf;
+
+  assert(CMD_BUF_SIZE >= 3);
   if (unix_read(fd, ptr, 3) != 3) {
-    fprintf(stderr, "Could not read header\n");
+    mp3dec_error_set_strerror(error, "Could not read command header from pipe");
     return -1;
   }
   ptr += 3;
+
+  *cmd = buf[0];
   *len = buf[1] | (buf[2] << 8);
+    
   if (*len > 0) {
-    if (*len > (BUF_SIZE - 3)) {
-      fprintf(stderr, "Data portion too long\n");
+    if (*len > (CMD_BUF_SIZE - 3)) {
+      mp3dec_error_set(error, "Data buffer is too big for a command");
       return -1;
     }
     if (unix_read(fd, ptr, *len) != *len) {
-      fprintf(stderr, "Could not read data portion\n");
+      mp3dec_error_set_strerror(error, "Could not read command data buffer from pipe");
       return -1;
     }
   }
 
-  if (*len > max_len) {
-    fprintf(stderr, "Data too long for given buffer\n");
-    return -1;
+  if (data != NULL) {
+    if (*len > max_len) {
+      mp3dec_error_set(error, "Data buffer is too big for the given buffer");
+      return -1;
+    }
+    memcpy(data, ptr, *len);
   }
-  memcpy(data, ptr, *len);
-  *cmd = buf[0];
 
   return 0;
 }

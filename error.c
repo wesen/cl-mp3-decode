@@ -1,6 +1,14 @@
+#include <string.h>
+#include <stdio.h>
+#include <errno.h>
+
 #include "error.h"
 
 /* error string handling */
+
+void mp3dec_error_reset(mp3dec_error_t *error) {
+  memset(error->strerror, 0, sizeof(error->strerror));
+}
 
 char *mp3dec_error(mp3dec_error_t *error) {
   return error->strerror;

@@ -5,8 +5,6 @@
 
 #include "error.h"
 
-#define BUF_SIZE          4096
-
 typedef enum {
   MP3DEC_COMMAND_PLAY = 0,
   MP3DEC_COMMAND_PAUSE,
@@ -14,6 +12,8 @@ typedef enum {
   MP3DEC_COMMAND_GET_ERROR,
   MP3DEC_COMMAND_LOAD,
   MP3DEC_COMMAND_STATUS,
+  MP3DEC_COMMAND_PING,
+  MP3DEC_COMMAND_PONG,
 } mp3dec_cmd_e;
 
 #define CMD_BUF_SIZE      1024
@@ -33,6 +33,7 @@ typedef struct child_state_s {
   int samplerate;
 
   struct mad_decoder decoder;
+  int mad_initialized;
 
   int mp3_fd;
   unsigned char mp3data[MAD_BUFFER_MDLEN];
