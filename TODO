@@ -1,7 +1,8 @@
-- write cmd, read cmd
-- start child in new
-- send PING PONG to child before returning from new
-- decode file sends load file to child
-- play starts decoder
-- decoder callbacks check for new commands
-- pause??
+X write cmd, read cmd
+X start child in new
+X send PING PONG to child before returning from new
+x decode file sends load file to child
+X play starts decoder
+X decoder callbacks check for new commands
+X pause
+- gather status (time, track title, etc...)
