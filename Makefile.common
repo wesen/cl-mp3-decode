@@ -1,0 +1,31 @@
+CFLAGS += -Wall -g
+
+# Create dependencies
+%.d: %.c
+	$(CC) -MM $(CFLAGS) $< > $@
+	$(CC) -MM $(CFLAGS) $< | sed s/\\.o/.d/ >> $@
+
+all: $(LIB_MADDEC) maddec madtest
+
+LIB_MADDEC_OBJS := misc.o error.o maddec.o child.o $(AUDIO_OBJS)
+MADDEC_OBJS := main.o
+MADTEST_OBJS := madtest.o error.o $(AUDIO_OBJS)
+
+OBJS := $(LIB_MADDEC_OBJS) $(MADDEC_OBJS) $(MADTEST_OBJS)
+
+DEPS := $(patsubst %.o,%.d,$(OBJS))
+include $(DEPS)
+
+
+maddec: $(MADDEC_OBJS) $(LIB_MADDEC)
+	$(CC) $(LDFLAGS) -o $@ $(MADDEC_OBJS) \
+              -L. -lmaddec -lmad -lm
+
+madtest: $(MADTEST_OBJS)
+	$(CC) $(LDFLAGS) -o madtest \
+		audio_macosx_rb.o audio_macosx.o madtest.o error.o \
+		-framework CoreAudio -lm -lmad
+
+
+clean:
+	- rm -rf *.o maddec madtest $(LIB_MADDEC) *.a

@@ -1,30 +1,13 @@
 CFLAGS += -I/usr/local/include -fPIC -I/sw/include
-LDFLAGS += -L/usr/local/lib -L/sw/lib
+LDFLAGS += -L/usr/local/lib -L/sw/lib -framework CoreAudio
+DYLIBFLAGS += -dynamiclib
 
-CFLAGS += -Wall -g
+LIB_MADDEC := libmaddec.dylib
+AUDIO_OBJS := audio_macosx_rb.o audio_macosx.o
 
-all: libmaddec.dylib maddec testaudio madtest
+include Makefile.common
 
-MADDEC_OBJS := misc.o error.o maddec.o child.o \
-               audio_macosx_rb.o audio_macosx.o
+$(LIB_MADDEC): $(LIB_MADDEC_OBJS)
+	$(CC) $(LDFLAGS) $(DYLIBFLAGS) -o $@ \
+              $(LIB_MADDEC_OBJS) -lm -lmad
 
-libmaddec.dylib: $(MADDEC_OBJS)
-	$(CC) $(LDFLAGS) -dynamiclib \
-              -o libmaddec.dylib $(MADDEC_OBJS) -lm -lmad \
-	      -framework CoreAudio
-
-maddec: main.o libmaddec.dylib
-	$(CC) -g -o $@ main.o $(LDFLAGS) -L. -lmaddec -lmad -lm
-
-madtest: madtest.o audio_macosx.o audio_macosx_rb.o error.o
-	$(CC) $(LDFLAGS) -o madtest \
-		audio_macosx_rb.o audio_macosx.o madtest.o error.o \
-		-framework CoreAudio -lm -lmad
-
-testaudio: audio_macosx_rb.o audio_macosx.o testaudio.o error.o
-	$(CC) $(LDFLAGS) -o testaudio \
-              audio_macosx_rb.o audio_macosx.o testaudio.o error.o \
-	      -framework CoreAudio
-
-clean:
-	- rm -rf *.o mp3-decode mp3dec maddec *.so *.a
