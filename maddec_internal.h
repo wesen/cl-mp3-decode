@@ -40,14 +40,11 @@ typedef struct child_state_s {
   int cmd_fd, response_fd;
   child_state_e state;
 
-  audio_t *audio;
-  
-  int nchannels;
-  int samplerate;
-
   struct mad_decoder decoder;
   int mad_initialized;
 
+  char filename[256];
+  
   int mp3_fd;
   unsigned char mp3data[MAD_BUFFER_MDLEN];
   unsigned int  mp3len;

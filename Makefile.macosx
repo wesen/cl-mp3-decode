@@ -3,14 +3,15 @@ LDFLAGS += -L/usr/local/lib -L/sw/lib
 
 CFLAGS += -Wall -g
 
-all: libmaddec.so maddec
+all: libmaddec.dylib maddec
 
 MADDEC_OBJS := misc.o error.o maddec.o child.o audio_null.o
 
-libmaddec.so: $(MADDEC_OBJS)
-	ld $(LDFLAGS) -lm -lmad -shared $(MADDEC_OBJS) -o libmaddec.so
+libmaddec.dylib: $(MADDEC_OBJS)
+	$(CC) $(LDFLAGS) -dynamiclib \
+              -o libmaddec.dylib $(MADDEC_OBJS) -lm -lmad
 
-maddec: main.o libmaddec.so
+maddec: main.o libmaddec.dylib
 	$(CC) -g -o $@ main.o $(LDFLAGS) -L. -lmaddec -lmad -lm
 
 clean:

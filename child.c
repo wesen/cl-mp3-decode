@@ -55,9 +55,6 @@ static void mp3dec_child_reset(child_state_t *state,
   
 
   state->state = CHILD_NONE;
-  state->nchannels = 0;
-  state->samplerate = 0;
-  state->audio = NULL;
 
   state->mp3_fd = -1;
   state->mp3len = 0;
@@ -77,9 +74,8 @@ static void mp3dec_child_close(child_state_t *state) {
     state->mad_initialized = 0;
   }
 
-  if (state->audio)
-    audio_close(state->audio);
-
+  audio_close();
+  
   if (state->mp3_fd != -1) {
     close(state->mp3_fd);
     state->mp3_fd = -1;
@@ -117,6 +113,11 @@ signed int mad_scale(mad_fixed_t sample)
 
   /* quantize */
   return sample >> (MAD_F_FRACBITS + 1 - 16);
+}
+
+static inline
+float mad_scale_float(mad_fixed_t sample) {
+  return (float)(sample/(float)(1L << MAD_F_FRACBITS));
 }
 
 static
@@ -188,7 +189,7 @@ enum mad_flow mad_output(void *data, struct mad_header const *header,
 
   if (!audio_write(pcm, &state->error)) {
     error_prepend(&state->error, "Could not write pcm data to audio");
-    state->state = CHILD_ERROR:
+    state->state = CHILD_ERROR;
     return MAD_FLOW_BREAK;
   }
 
