@@ -1,4 +1,3 @@
-#include <sys/soundcard.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/ioctl.h>
@@ -20,6 +19,8 @@
 #include "maddec_internal.h"
 #include "error.h"
 #include "misc.h"
+
+#include "audio.h"
 
 static enum mad_flow mad_input(void *data, struct mad_stream *stream);
 static enum mad_flow mad_output(void *data, struct mad_header const *header, struct mad_pcm *pcm);
@@ -56,8 +57,7 @@ static void mp3dec_child_reset(child_state_t *state,
   state->state = CHILD_NONE;
   state->nchannels = 0;
   state->samplerate = 0;
-  state->snd_fd = -1;
-  state->snd_initialized = 0;
+  state->audio = NULL;
 
   state->mp3_fd = -1;
   state->mp3len = 0;
@@ -76,12 +76,9 @@ static void mp3dec_child_close(child_state_t *state) {
     mad_decoder_finish(&state->decoder);
     state->mad_initialized = 0;
   }
-  
-  if (state->snd_fd != -1) {
-    close(state->snd_fd);
-    state->snd_fd = -1;
-    state->snd_initialized = 0;
-  }
+
+  if (state->audio)
+    audio_close(state->audio);
 
   if (state->mp3_fd != -1) {
     close(state->mp3_fd);
@@ -97,61 +94,6 @@ static void mp3dec_child_close(child_state_t *state) {
     close(state->response_fd);
     state->response_fd = -1;
   }
-}
-
-/* open the soundcard, and set parameters from the mp3 header */
-static int mp3dec_audio_init(child_state_t *state) {
-  int ret = 0;
-  int fmts;
-  int rate;
-  int channels;
-
-  if (state->snd_fd < 0) {
-    state->snd_fd = open("/dev/dsp", O_RDWR);
-    if (state->snd_fd < 0) {
-      error_set_strerror(&state->error, "Could not open sound device");
-      return -1;
-    }
-  }
-    
-  ret = ioctl(state->snd_fd, SNDCTL_DSP_RESET, NULL);
-  if (ret < 0) {
-    error_set_strerror(&state->error, "Could not reset audio");
-    goto error;
-  }
-
-  /* 16 bits big endian for now */
-  fmts = AFMT_S16_NE;
-  ret = ioctl(state->snd_fd, SNDCTL_DSP_SETFMT, &fmts);
-  if ((fmts != AFMT_S16_NE) || (ret < 0)) {
-    error_set_strerror(&state->error, "Could not set format");
-    goto error;
-  }
-  
-  channels = state->nchannels;
-  ret = ioctl(state->snd_fd, SNDCTL_DSP_STEREO, &channels);
-  if (ret < 0) {
-    error_printf_strerror(&state->error, "Could not enable %d channels",
-			  state->nchannels);
-    goto error;
-  }
-
-  rate = state->samplerate;
-  ret = ioctl(state->snd_fd, SNDCTL_DSP_SPEED, &rate);
-  if (ret < 0) {
-    error_printf_strerror(&state->error, "Could not set samplerate of %d hz",
-			  state->samplerate);
-    goto error;
-  }
-
-  state->snd_initialized = 1;
-
-  return 0;
-  
- error:
-  close(state->snd_fd);
-  state->snd_fd = -1;
-  return -1;
 }
 
 /*
@@ -232,11 +174,6 @@ static
 enum mad_flow mad_output(void *data, struct mad_header const *header,
 			 struct mad_pcm *pcm) {
   child_state_t *state = data;
-  unsigned char audio_buf[1500000];
-  unsigned int nchannels, nsamples;
-  mad_fixed_t const *left_ch, *right_ch;
-  unsigned int len = 0;
-  unsigned char *ptr = NULL;
 
   if (state->state != CHILD_PLAY) {
     return MAD_FLOW_STOP;
@@ -249,49 +186,13 @@ enum mad_flow mad_output(void *data, struct mad_header const *header,
     }
   }
 
-  nchannels = pcm->channels;
-  nsamples  = pcm->length;
-  left_ch   = pcm->samples[0];
-  right_ch  = pcm->samples[1];
-
-  if (!state->snd_initialized ||
-      (nchannels != state->nchannels) ||
-      (pcm->samplerate != state->samplerate)) {
-    state->nchannels = nchannels;
-    state->samplerate = pcm->samplerate;
-
-    if (mp3dec_audio_init(state) < 0) {
-      error_set(&state->error, "Could not initialize audio");
-      state->state = CHILD_ERROR;
-      return MAD_FLOW_BREAK;
-    }
-    
-    state->snd_initialized = 1;
-  }
-
-  ptr = audio_buf;
-  while (nsamples--) {
-    signed int sample;
-
-    sample = mad_scale(*left_ch++);
-    *ptr++ = (sample& 0xFF);
-    *ptr++ = ((sample >> 8) & 0xFF);
-    
-    if (nchannels == 2) {
-      sample = mad_scale(*right_ch++);
-      *ptr++ = (sample& 0xFF);
-      *ptr++ = ((sample >> 8) & 0xFF);
-    }
-  }
-
-  len = ptr - audio_buf;
-  if (unix_write(state->snd_fd, audio_buf, len) != len) {
-    error_set_strerror(&state->error, "Could not write audio data to soundcard");
-    state->state = CHILD_ERROR;
+  if (!audio_write(pcm, &state->error)) {
+    error_prepend(&state->error, "Could not write pcm data to audio");
+    state->state = CHILD_ERROR:
     return MAD_FLOW_BREAK;
-  } else {
-    return MAD_FLOW_CONTINUE;
   }
+
+  return MAD_FLOW_CONTINUE;
 }
 
 static

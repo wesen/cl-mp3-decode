@@ -4,6 +4,7 @@
 #include <mad.h>
 
 #include "error.h"
+#include "audio.h"
 
 #define CMD_BUF_SIZE      1024
 
@@ -39,8 +40,8 @@ typedef struct child_state_s {
   int cmd_fd, response_fd;
   child_state_e state;
 
-  int snd_fd;
-  int snd_initialized;
+  audio_t *audio;
+  
   int nchannels;
   int samplerate;
 
