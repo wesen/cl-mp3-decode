@@ -18,98 +18,22 @@
 
 #include "maddec.h"
 
-/* error string handling */
-
-char *mp3dec_error(mp3_state_t *state) {
-  return state->strerror;
-}
-
-static void mp3dec_error_set(mp3_state_t *state, char *str) {
-  strncpy(state->strerror, str, sizeof(state->strerror) - 1);
-  state->strerror[sizeof(state->strerror) - 1] = '\0';
-}
-
-static void mp3dec_error_set_strerror(mp3_state_t *state, char *str) {
-  snprintf(state->strerror, sizeof(state->strerror), "%s: %s", str, strerror(errno));
-}
-
-static void mp3dec_error_append(mp3_state_t *state, char *str) {
-  unsigned char buf[4096];
-  strncpy(buf, state->strerror, sizeof(buf) - 1);
-  buf[sizeof(buf) - 1] = '\0';
-
-  snprintf(state->strerror, sizeof(state->strerror), "%s: %s", buf, str);
-}
-
-static void mp3dec_error_prepend(mp3_state_t *state, char *str) {
-  unsigned char buf[4096];
-  strncpy(buf, state->strerror, sizeof(buf) - 1);
-  buf[sizeof(buf) - 1] = '\0';
-
-  snprintf(state->strerror, sizeof(state->strerror), "%s: %s", str, buf);
-}
-
-/* ahh, the joys of unix */
-static int mp3dec_read(int mp3_fd, unsigned char *buf, unsigned int len) {
-  int ret;
-  unsigned char *ptr = buf;
-  unsigned int left = len, total = 0;
-
-  while (left > 0) {
-  again:
-    ret = read(mp3_fd, ptr, left);
-    if (ret < 0) {
-      if (ret != EINTR)
-	return -1;
-      else
-	goto again;
-    }
-    
-    if (ret == 0)
-      return total;
-
-    assert(ret <= left);
-    total += ret;
-    left -= ret;
-    ptr += ret;
-  }
-
-  return total;
-}
-
-static int mp3dec_write(int snd_fd, unsigned char *buf, unsigned int len) {
-  int ret;
-  unsigned char *ptr = buf;
-  unsigned int left = len, total = 0;
-
-  while (left > 0) {
-  again:
-    ret = write(snd_fd, ptr, left);
-    if (ret < 0) {
-      if (ret != EINTR)
-	return -1;
-      else
-	goto again;
-    }
-    
-    if (ret == 0)
-      return total;
-
-    assert(ret <= left);
-    total += ret;
-    left -= ret;
-    ptr += ret;
-  }
-
-  return total;
-}
+/* commands:
+   - load file
+   - play
+   - stop
+   - status
+   - pause
+*/
 
 /* initializing and stuff */
 
-mp3_state_t *mp3dec_new(void) {
-  mp3_state_t *state = malloc(sizeof(mp3_state_t));
+mp3dec_state_t *mp3dec_new(void) {
+  mp3dec_state_t *state = malloc(sizeof(mp3dec_state_t));
   if (state == NULL)
     return NULL;
+
+  state->child_pid = -1;
   
   state->channels = 0;
   state->little_endian = 0;
@@ -120,29 +44,18 @@ mp3_state_t *mp3dec_new(void) {
   state->mp3eof = 0;
   state->snd_initialized = 0;
 
-  memset(state->pcm_l, 0, sizeof(state->pcm_l));
-  memset(state->pcm_r, 0, sizeof(state->pcm_r));
   memset(state->strerror, 0, sizeof(state->strerror));
   memset(state->mp3data, 0, sizeof(state->mp3data));
 
   return state;
 }
 
-void mp3dec_close(mp3_state_t *state) {
-  if (state->snd_fd >= 0) {
-    close(state->snd_fd);
-    state->snd_fd = -1;
-  }
-  if (state->mp3_fd >= 0) {
-    close(state->mp3_fd);
-    state->mp3_fd = -1;
-  }
-
+void mp3dec_close(mp3dec_state_t *state) {
   free(state);
 }
 
 /* open the soundcard, and set parameters from the mp3 header */
-static int mp3dec_audio_init(mp3_state_t *state) {
+static int mp3dec_audio_init(child_state_t *state) {
   int ret = 0;
   int fmts;
   int rate;
@@ -162,7 +75,7 @@ static int mp3dec_audio_init(mp3_state_t *state) {
     goto error;
   }
 
-  /* x86 only for now XXX */
+  /* 16 bits big endian for now */
   fmts = AFMT_S16_NE;
   ret = ioctl(state->snd_fd, SNDCTL_DSP_SETFMT, &fmts);
   if ((fmts != AFMT_S16_NE) || (ret < 0)) {
@@ -218,7 +131,7 @@ signed int mad_scale(mad_fixed_t sample)
 
 static
 enum mad_flow mad_input(void *data, struct mad_stream *stream) {
-  mp3_state_t *state = data;
+  child_state_t *state = data;
   int ret;
 
   if (state->mp3eof) {
@@ -260,7 +173,7 @@ enum mad_flow mad_input(void *data, struct mad_stream *stream) {
 static
 enum mad_flow mad_output(void *data, struct mad_header const *header,
 			 struct mad_pcm *pcm) {
-  mp3_state_t *state = data;
+  child_state_t *state = data;
   unsigned char audio_buf[1500000];
   unsigned int nchannels, nsamples;
   mad_fixed_t const *left_ch, *right_ch;
@@ -309,7 +222,7 @@ enum mad_flow mad_output(void *data, struct mad_header const *header,
 static
 enum mad_flow mad_error(void *data, struct mad_stream *stream,
 			struct mad_frame *frame) {
-  mp3_state_t *state = data;
+  child_state_t *state = data;
 
   fprintf(stderr, "decoder error 0x%05x (%s) at byte offset %u\n",
 	  stream->error, mad_stream_errorstr(stream),
@@ -319,7 +232,7 @@ enum mad_flow mad_error(void *data, struct mad_stream *stream,
 }
 
 
-int mp3dec_decode_file(mp3_state_t *state, char *filename) {
+int mp3dec_decode_file(mp3dec_state_t *state, char *filename) {
   int retval = 0;
   
   if (state->snd_fd >= 0) {

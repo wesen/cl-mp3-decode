@@ -1,0 +1,7 @@
+- write cmd, read cmd
+- start child in new
+- send PING PONG to child before returning from new
+- decode file sends load file to child
+- play starts decoder
+- decoder callbacks check for new commands
+- pause??
