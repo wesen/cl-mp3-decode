@@ -16,10 +16,10 @@ libmaddec.a: maddec.o
 	ar r $@ maddec.o
 
 mp3dec: main.o libmp3dec.a
-	$(CC) -o $@ main.o $(LDFLAGS) -L. -lmp3dec -lmp3lame -lm
+	$(CC) -g -o $@ main.o $(LDFLAGS) -L. -lmp3dec -lmp3lame -lm
 
 maddec: main.o libmaddec.a
-	$(CC) -o $@ main.o $(LDFLAGS) -L. -lmaddec -lmad -lm
+	$(CC) -g -o $@ main.o $(LDFLAGS) -L. -lmaddec -lmad -lm
 
 clean:
-	- rm -rf *.o mp3-decode
+	- rm -rf *.o mp3-decode mp3dec maddec *.so *.a

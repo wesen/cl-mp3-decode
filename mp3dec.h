@@ -21,7 +21,7 @@ typedef struct mp3_state_s {
 } mp3_state_t;
 
 char *mp3dec_error(mp3_state_t *state);
-void mp3dec_reset(mp3_state_t *state);
+mp3_state_t *mp3dec_reset(void);
 void mp3dec_close(mp3_state_t *state);
 int mp3dec_decode_data(mp3_state_t *state, unsigned char *buf, unsigned int len);
 int mp3dec_decode_file(mp3_state_t *state, char *filename);

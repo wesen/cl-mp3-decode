@@ -22,14 +22,15 @@ typedef struct mp3_state_s {
   int nchannels;
   int samplerate;
 
-  void *buffer;
-  unsigned int length;
-
   struct mad_decoder decoder;
+
+  unsigned char mp3data[MAD_BUFFER_MDLEN];
+  unsigned int mp3len;
+  unsigned char mp3eof;
 } mp3_state_t;
 
 char *mp3dec_error(mp3_state_t *state);
-void mp3dec_reset(mp3_state_t *state);
+mp3_state_t *mp3dec_new(void);
 void mp3dec_close(mp3_state_t *state);
 int mp3dec_decode_file(mp3_state_t *state, char *filename);
 

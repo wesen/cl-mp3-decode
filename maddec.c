@@ -5,6 +5,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
+#include <stdlib.h>
+
 #include <assert.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -104,22 +106,29 @@ static int mp3dec_write(int snd_fd, unsigned char *buf, unsigned int len) {
 
 /* initializing and stuff */
 
-void mp3dec_reset(mp3_state_t *state) {
+mp3_state_t *mp3dec_new(void) {
+  mp3_state_t *state = malloc(sizeof(mp3_state_t));
+  if (state == NULL)
+    return NULL;
+  
   state->channels = 0;
   state->little_endian = 0;
   state->pcmlen = 0;
   state->snd_fd = -1;
   state->mp3_fd = -1;
+  state->mp3len = 0;
+  state->mp3eof = 0;
   state->snd_initialized = 0;
 
   memset(state->pcm_l, 0, sizeof(state->pcm_l));
   memset(state->pcm_r, 0, sizeof(state->pcm_r));
   memset(state->strerror, 0, sizeof(state->strerror));
+  memset(state->mp3data, 0, sizeof(state->mp3data));
+
+  return state;
 }
 
 void mp3dec_close(mp3_state_t *state) {
-  mad_decoder_finish(&state->decoder);
-  
   if (state->snd_fd >= 0) {
     close(state->snd_fd);
     state->snd_fd = -1;
@@ -129,7 +138,7 @@ void mp3dec_close(mp3_state_t *state) {
     state->mp3_fd = -1;
   }
 
-  mp3dec_reset(state);
+  free(state);
 }
 
 /* open the soundcard, and set parameters from the mp3 header */
@@ -183,48 +192,6 @@ static int mp3dec_audio_init(mp3_state_t *state) {
   return -1;
 }
 
-/* write data to the audio card, converting the samples on the way */
-static int mp3dec_audio_write(mp3_state_t *state) {
-  unsigned char audio_buf[sizeof(state->pcm_l) + sizeof(state->pcm_r)];
-  unsigned int len = 0;
-  unsigned char *ptr = NULL;
-
-  ptr = audio_buf;
-  if (state->little_endian) {
-    int i;
-    for (i = 0; i < state->pcmlen; i++) {
-      /* right channel first ?? XXX */
-      *ptr++ = (state->pcm_r[i]& 0xFF);
-      *ptr++ = ((state->pcm_r[i] >> 8) & 0xFF);
-      if (state->channels == 2) {
-	*ptr++ = (state->pcm_l[i]& 0xFF);
-	*ptr++ = ((state->pcm_l[i] >> 8) & 0xFF);
-      }
-    } 
-  } else {
-    int i;
-    for (i = 0; i < state->pcmlen; i++) {
-      /* XXX ?? */
-      *ptr++ = ((state->pcm_r[i] >> 8) & 0xFF);
-      *ptr++ = (state->pcm_r[i]& 0xFF);
-      if (state->channels == 2) {
-	*ptr++ = ((state->pcm_l[i] >> 8) & 0xFF);
-	*ptr++ = (state->pcm_l[i]& 0xFF);
-      }
-    }
-  }
-
-  len = ptr - audio_buf;
-  if (mp3dec_write(state->snd_fd, audio_buf, len) != len) {
-    mp3dec_error_set_strerror(state, "Could not write audio data to soundcard");
-    return -1;
-  }
-
-  state->pcmlen = 0;
-
-  return 0;
-}
-
 /*
  * The following utility routine performs simple rounding, clipping, and
  * scaling of MAD's high-resolution samples down to 16 bits. It does not
@@ -252,13 +219,41 @@ signed int mad_scale(mad_fixed_t sample)
 static
 enum mad_flow mad_input(void *data, struct mad_stream *stream) {
   mp3_state_t *state = data;
+  int ret;
 
-  if (state->length == 0)
+  if (state->mp3eof) {
     return MAD_FLOW_STOP;
+  }
 
-  mad_stream_buffer(stream, state->buffer, state->length);
-  state->length = 0;
+  if (stream->next_frame) {
+    memmove(state->mp3data, stream->next_frame,
+	    (state->mp3len = &state->mp3data[state->mp3len] - stream->next_frame));
+  } else {
+    state->mp3len = 0;
+  }
 
+  assert(state->mp3_fd >= 0);
+
+  ret = mp3dec_read(state->mp3_fd, state->mp3data + state->mp3len,
+		    sizeof(state->mp3data) - state->mp3len);
+  
+  if (ret < 0) {
+    mp3dec_error_set_strerror(state, "Could not read from the mp3 file");
+    return MAD_FLOW_BREAK;
+  } else if (ret == 0) {
+    assert(sizeof(state->mp3data) - state->mp3len >= MAD_BUFFER_GUARD);
+
+    while (ret < MAD_BUFFER_GUARD)
+      state->mp3data[ret++] = 0;
+
+    state->mp3eof = 1;
+  }
+  
+  state->mp3len += ret;
+
+  assert(state->mp3len > MAD_BUFFER_GUARD);
+  
+  mad_stream_buffer(stream, state->mp3data, state->mp3len);
   return MAD_FLOW_CONTINUE;
 }
 
@@ -283,7 +278,8 @@ enum mad_flow mad_output(void *data, struct mad_header const *header,
     state->nchannels = nchannels;
     state->samplerate = pcm->samplerate;
     if (mp3dec_audio_init(state) < 0)
-      return MAD_FLOW_STOP;
+      return MAD_FLOW_BREAK;
+    state->snd_initialized = 1;
   }
 
   ptr = audio_buf;
@@ -291,21 +287,20 @@ enum mad_flow mad_output(void *data, struct mad_header const *header,
     signed int sample;
 
     sample = mad_scale(*left_ch++);
-    *ptr++ = (sample & 0xFF);
+    *ptr++ = (sample& 0xFF);
     *ptr++ = ((sample >> 8) & 0xFF);
     
     if (nchannels == 2) {
       sample = mad_scale(*right_ch++);
-      *ptr++ = (sample & 0xFF);
+      *ptr++ = (sample& 0xFF);
       *ptr++ = ((sample >> 8) & 0xFF);
     }
   }
 
   len = ptr - audio_buf;
-  printf("write %d bytes\n", len);
   if (mp3dec_write(state->snd_fd, audio_buf, len) != len) {
     mp3dec_error_set_strerror(state, "Could not write audio data to soundcard");
-    return MAD_FLOW_STOP;
+    return MAD_FLOW_BREAK;
   } else {
     return MAD_FLOW_CONTINUE;
   }
@@ -318,19 +313,20 @@ enum mad_flow mad_error(void *data, struct mad_stream *stream,
 
   fprintf(stderr, "decoder error 0x%05x (%s) at byte offset %u\n",
 	  stream->error, mad_stream_errorstr(stream),
-	  stream->this_frame);
+	  stream->this_frame - state->mp3data);
 
   return MAD_FLOW_CONTINUE;
 }
 
 
 int mp3dec_decode_file(mp3_state_t *state, char *filename) {
- int retval = 0;
- struct stat stat;
-
-  if (state->snd_fd >= 0)
-    close(state->snd_fd);
+  int retval = 0;
   
+  if (state->snd_fd >= 0) {
+    close(state->snd_fd);
+    state->snd_fd = -1;
+  }
+
   assert(state->mp3_fd == -1);
 
   state->mp3_fd = open(filename, O_RDONLY);
@@ -339,37 +335,17 @@ int mp3dec_decode_file(mp3_state_t *state, char *filename) {
     return -1;
   }
 
-  if ((fstat(state->mp3_fd, &stat) == -1) ||
-      (stat.st_size == 0)) {
-    mp3dec_error_set_strerror(state, "Could not stat the mp3 file");
-    goto exit;
-  }
-
-  state->length = stat.st_size;
-  
-  state->buffer = mmap(0, state->length,
-		       PROT_READ, MAP_SHARED, state->mp3_fd, 0);
-  if (state->buffer == MAP_FAILED) {
-    mp3dec_error_set_strerror(state, "Could not mmap the mp3 file");
-    goto exit;
-  }
-
   mad_decoder_init(&state->decoder, state,
 		   mad_input, 0, 0,
 		   mad_output,
 		   mad_error, 0);
 
   retval = mad_decoder_run(&state->decoder, MAD_DECODER_MODE_SYNC);
-
-  if (munmap(state->buffer, state->length) == -1) {
-    mp3dec_error_set_strerror(state, "Could not unmap the mp3 file");
-  }
-
   mad_decoder_finish(&state->decoder);
 
- exit:
   close(state->mp3_fd);
   state->mp3_fd = -1;
+
   return retval;
 }
 

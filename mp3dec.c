@@ -1,7 +1,9 @@
 #include <sys/soundcard.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <sys/ioctl.h>
 
+#include <stdlib.h>
 #include <assert.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -101,7 +103,11 @@ static int mp3dec_write(int snd_fd, unsigned char *buf, unsigned int len) {
 
 /* initializing and stuff */
 
-void mp3dec_reset(mp3_state_t *state) {
+mp3_state_t *mp3dec_new(void) {
+  mp3_state_t *state = malloc(sizeof(*state));
+  if (state == NULL)
+    return NULL;
+  
   state->channels = 0;
   state->little_endian = 0;
   state->pcmlen = 0;
@@ -113,6 +119,8 @@ void mp3dec_reset(mp3_state_t *state) {
   memset(state->pcm_l, 0, sizeof(state->pcm_l));
   memset(state->pcm_r, 0, sizeof(state->pcm_r));
   memset(state->strerror, 0, sizeof(state->strerror));
+
+  return state;
 }
 
 void mp3dec_close(mp3_state_t *state) {
@@ -129,7 +137,7 @@ void mp3dec_close(mp3_state_t *state) {
     state->mp3_fd = -1;
   }
 
-  mp3dec_reset(state);
+  free(state);
 }
 
 /* open the soundcard, and set parameters from the mp3 header */
@@ -163,7 +171,7 @@ static int mp3dec_audio_init(mp3_state_t *state, mp3data_struct *mp3data) {
   
   channels = state->channels = mp3data->stereo;
   ret = ioctl(state->snd_fd, SNDCTL_DSP_STEREO, &channels);
-  if ((ret < 0) || (channels != (mp3data->stereo - 1))) {
+  if (ret < 0) {
     mp3dec_error_set_strerror(state, "Could not set stereo mode");
     goto error;
   }
@@ -191,7 +199,7 @@ static int mp3dec_audio_write(mp3_state_t *state) {
   unsigned char *ptr = NULL;
 
   ptr = audio_buf;
-  if (state->little_endian) {
+  {
     int i;
     for (i = 0; i < state->pcmlen; i++) {
       /* right channel first ?? XXX */
@@ -202,17 +210,6 @@ static int mp3dec_audio_write(mp3_state_t *state) {
 	*ptr++ = ((state->pcm_l[i] >> 8) & 0xFF);
       }
     } 
-  } else {
-    int i;
-    for (i = 0; i < state->pcmlen; i++) {
-      /* XXX ?? */
-      *ptr++ = ((state->pcm_r[i] >> 8) & 0xFF);
-      *ptr++ = (state->pcm_r[i]& 0xFF);
-      if (state->channels == 2) {
-	*ptr++ = ((state->pcm_l[i] >> 8) & 0xFF);
-	*ptr++ = (state->pcm_l[i]& 0xFF);
-      }
-    }
   }
 
   len = ptr - audio_buf;
