@@ -66,6 +66,8 @@ int unix_write(int fd, unsigned char *buf, unsigned int len) {
 int unix_check_fd_read(int fd) {
   struct pollfd pfd[1];
   int ret;
+
+  //  printf("checking if %d is active\n", fd);
   
   pfd[0].fd = fd;
   pfd[0].events = POLLIN | POLLERR;
@@ -74,6 +76,7 @@ int unix_check_fd_read(int fd) {
   ret = poll(pfd, 1, 0);
   if (ret < 0)
     return ret;
+  //  printf("revents: %x\n", pfd[0].revents);
   if ((pfd[0].revents & POLLIN) ||
       (pfd[0].revents & POLLERR))
     return 1;
