@@ -14,6 +14,7 @@
 #include <mad.h>
 
 #include "maddec.h"
+#include "maddec_internal.h"
 #include "error.h"
 #include "misc.h"
 
@@ -28,31 +29,33 @@
 /* initializing and stuff */
 
 int mp3dec_child_main(int cmd_fd, int response_fd);
+int mp3dec_start(mp3dec_state_t *state);
 
 mp3dec_state_t *mp3dec_new(void) {
   mp3dec_state_t *state = malloc(sizeof(mp3dec_state_t));
   if (state == NULL)
     return NULL;
 
-  mp3dec_error_reset(&state->error);
+  error_reset(&state->error);
   state->child_pid = -1;
   state->cmd_fd = -1;
   state->response_fd = -1;
-  
-  return state;
-}
 
-void mp3dec_close(mp3dec_state_t *state) {
-  free(state);
-}
-
-int mp3dec_parent_main(mp3dec_state_t *state, int cmd_fd, int response_fd) {
-  if (mp3dec_write_cmd(cmd_fd, MP3DEC_COMMAND_EXIT, NULL, 0, &state->error) < 0) {
-    mp3dec_error_prepend(&state->error, "Could not send EXIT to child");
-    return -1;
+  if (mp3dec_start(state) < 0) {
+    mp3dec_delete(state);
+    return NULL;
+  } else {
+    return state;
   }
+}
 
-  return 0;
+void mp3dec_delete(mp3dec_state_t *state) {
+  if (state->child_pid != -1) {
+    mp3dec_exit(state);
+    kill(state->child_pid, SIGTERM);
+    waitpid(state->child_pid, NULL, 0);
+  }
+  free(state);
 }
 
 int mp3dec_parent_cmd_ack(mp3dec_state_t *state, mp3dec_cmd_e cmd, void *data, unsigned int len) {
@@ -61,7 +64,7 @@ int mp3dec_parent_cmd_ack(mp3dec_state_t *state, mp3dec_cmd_e cmd, void *data, u
   unsigned int buflen;
   
   if (state->child_pid == -1) {
-    mp3dec_error_set(&state->error, "No child started");
+    error_set(&state->error, "No child started");
     return -1;
   }
 
@@ -70,22 +73,22 @@ int mp3dec_parent_cmd_ack(mp3dec_state_t *state, mp3dec_cmd_e cmd, void *data, u
   assert(state->child_pid != -1);
 
   if (mp3dec_write_cmd(state->cmd_fd, cmd, data, len, &state->error) < 0) {
-    mp3dec_error_prepend(&state->error, "Could not write command to child");
+    error_prepend(&state->error, "Could not write command to child");
     return -1;
   }
   if (mp3dec_read_cmd(state->response_fd, &resp, buf, &buflen, sizeof(buf), &state->error) < 0) {
-    mp3dec_error_prepend(&state->error, "Could not read response from child");
+    error_prepend(&state->error, "Could not read response from child");
     return -1;
   }
 
   if (resp == MP3DEC_RESPONSE_ACK) {
     return 0;
   } else if (resp == MP3DEC_RESPONSE_ERR) {
-    mp3dec_error_set(&state->error, "Error from child");
-    mp3dec_error_append(&state->error, buf); /* ensure that buf is a string XXX */
+    error_set(&state->error, "Error from child");
+    error_append(&state->error, buf); /* ensure that buf is a string XXX */
     return -1;
   } else {
-    mp3dec_error_set(&state->error, "Unknown response from child");
+    error_set(&state->error, "Unknown response from child");
     return -1;
   }
 }
@@ -116,7 +119,7 @@ int mp3dec_ping(mp3dec_state_t *state) {
   unsigned int buflen;
   
   if (state->child_pid == -1) {
-    mp3dec_error_set(&state->error, "No child started");
+    error_set(&state->error, "No child started");
     return -1;
   }
 
@@ -125,23 +128,23 @@ int mp3dec_ping(mp3dec_state_t *state) {
   assert(state->child_pid != -1);
 
   if (mp3dec_write_cmd(state->cmd_fd, MP3DEC_COMMAND_PING, NULL, 0, &state->error) < 0) {
-    mp3dec_error_prepend(&state->error, "Could not write PING to child");
+    error_prepend(&state->error, "Could not write PING to child");
     return -1;
   }
   if (mp3dec_read_cmd(state->response_fd, &resp, buf, &buflen, sizeof(buf), &state->error) < 0) {
-    mp3dec_error_prepend(&state->error, "Could not read response from child");
+    error_prepend(&state->error, "Could not read response from child");
     return -1;
   }
 
   if (resp == MP3DEC_RESPONSE_PONG) {
     return 0;
   } else if (resp == MP3DEC_RESPONSE_ERR) {
-    mp3dec_error_set(&state->error, "Error from child");
-    mp3dec_error_append(&state->error, buf); /* ensure that buf is a string XXX */
+    error_set(&state->error, "Error from child");
+    error_append(&state->error, buf); /* ensure that buf is a string XXX */
     return -1;
   } else {
     printf("got response %x\n", resp);
-    mp3dec_error_set(&state->error, "Unknown response from child");
+    error_set(&state->error, "Unknown response from child");
     return -1;
   }
 }
@@ -154,20 +157,20 @@ int mp3dec_start(mp3dec_state_t *state) {
 
   ret = pipe(cmd_fd);
   if (ret < 0) {
-    mp3dec_error_set_strerror(&state->error, "Could not open command pipe");
+    error_set_strerror(&state->error, "Could not open command pipe");
     retval = -1;
     goto error;
   }
   ret = pipe(response_fd);
   if (ret < 0) {
-    mp3dec_error_set_strerror(&state->error, "Could not open response pipe");
+    error_set_strerror(&state->error, "Could not open response pipe");
     retval = -1;
     goto error;
   }
 
   ret = fork();
   if (ret < 0) {
-    mp3dec_error_set_strerror(&state->error, "Could not fork");
+    error_set_strerror(&state->error, "Could not fork");
     retval = -1;
     goto error;
   }
@@ -197,7 +200,7 @@ int mp3dec_start(mp3dec_state_t *state) {
     state->response_fd = response_fd[0];
 
     if (mp3dec_ping(state) != 0) {
-      mp3dec_error_prepend(&state->error, "Could not PING child");
+      error_prepend(&state->error, "Could not PING child");
       goto error;
     }
 
@@ -231,4 +234,8 @@ int mp3dec_start(mp3dec_state_t *state) {
   }
 
   return retval;
+}
+
+char *mp3dec_error(mp3dec_state_t *state) {
+  return error_get(&state->error);
 }

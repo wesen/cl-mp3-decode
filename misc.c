@@ -86,13 +86,13 @@ int unix_check_fd_read(int fd) {
 
 int mp3dec_write_cmd(int fd, mp3dec_cmd_e cmd,
 		     void *data, unsigned int len,
-		     mp3dec_error_t *error) {
+		     error_t *error) {
   unsigned char buf[CMD_BUF_SIZE];
   unsigned char *ptr = buf;
   unsigned int cmd_len = 0;
   
   if (len > sizeof(buf) - 3) {
-    mp3dec_error_set(error, "Data buffer is too big for a command");
+    error_set(error, "Data buffer is too big for a command");
     return -1;
   }
   
@@ -105,26 +105,26 @@ int mp3dec_write_cmd(int fd, mp3dec_cmd_e cmd,
   }
   cmd_len = ptr - buf;
   if (unix_write(fd, buf, cmd_len) != cmd_len) {
-    mp3dec_error_set_strerror(error, "Could not write command to pipe");
+    error_set_strerror(error, "Could not write command to pipe");
     return -1;
   }
 
   return 0;
 }
 
-int mp3dec_write_cmd_string(int fd, mp3dec_cmd_e cmd, char *string, mp3dec_error_t *error) {
+int mp3dec_write_cmd_string(int fd, mp3dec_cmd_e cmd, char *string, error_t *error) {
   return mp3dec_write_cmd(fd, cmd, string, strlen(string) + 1, error);
 }
 
 int mp3dec_read_cmd(int fd, mp3dec_cmd_e *cmd,
 		    void *data, unsigned int *len, unsigned int max_len,
-		    mp3dec_error_t *error) {
+		    error_t *error) {
   unsigned char buf[CMD_BUF_SIZE];
   unsigned char *ptr = buf;
 
   assert(CMD_BUF_SIZE >= 3);
   if (unix_read(fd, ptr, 3) != 3) {
-    mp3dec_error_set_strerror(error, "Could not read command header from pipe");
+    error_set_strerror(error, "Could not read command header from pipe");
     return -1;
   }
   ptr += 3;
@@ -134,18 +134,18 @@ int mp3dec_read_cmd(int fd, mp3dec_cmd_e *cmd,
     
   if (*len > 0) {
     if (*len > (CMD_BUF_SIZE - 3)) {
-      mp3dec_error_set(error, "Data buffer is too big for a command");
+      error_set(error, "Data buffer is too big for a command");
       return -1;
     }
     if (unix_read(fd, ptr, *len) != *len) {
-      mp3dec_error_set_strerror(error, "Could not read command data buffer from pipe");
+      error_set_strerror(error, "Could not read command data buffer from pipe");
       return -1;
     }
   }
 
   if (data != NULL) {
     if (*len > max_len) {
-      mp3dec_error_set(error, "Data buffer is too big for the given buffer");
+      error_set(error, "Data buffer is too big for the given buffer");
       return -1;
     }
     memcpy(data, ptr, *len);

@@ -3,15 +3,15 @@
 
 #define ERROR_STRING_SIZE 256
 
-typedef struct mp3dec_error_s {
+typedef struct error_s {
   char strerror[ERROR_STRING_SIZE];
-} mp3dec_error_t;
+} error_t;
 
-void mp3dec_error_reset(mp3dec_error_t *error);
-char *mp3dec_error(mp3dec_error_t *error);
-void mp3dec_error_set(mp3dec_error_t *error, char *str);
-void mp3dec_error_set_strerror(mp3dec_error_t *error, char *str);
-void mp3dec_error_append(mp3dec_error_t *error, char *str);
-void mp3dec_error_prepend(mp3dec_error_t *error, char *str);
+void error_reset(error_t *error);
+char *error_get(error_t *error);
+void error_set(error_t *error, char *str);
+void error_set_strerror(error_t *error, char *str);
+void error_append(error_t *error, char *str);
+void error_prepend(error_t *error, char *str);
 
 #endif /* ERROR_H__ */

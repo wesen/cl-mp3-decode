@@ -1,20 +1,16 @@
-CFLAGS += -I/usr/local/include
+CFLAGS += -I/usr/local/include -fPIC
 LDFLAGS += -L/usr/local/lib
 
 CFLAGS += -Wall -g
 
-all: libmaddec.a maddec
+all: libmaddec.so maddec
 
 MADDEC_OBJS := misc.o error.o maddec.o child.o
 
-libmaddec.so: maddec.c
-	$(CC) $(CFLAGS) -fPIC -c -o libmaddec.o maddec.c
-	ld $(LDFLAGS) -lm -lmp3lame -shared libmaddec.o -o libmaddec.so
+libmaddec.so: $(MADDEC_OBJS)
+	ld $(LDFLAGS) -lm -lmad -shared $(MADDEC_OBJS) -o libmaddec.so
 
-libmaddec.a: $(MADDEC_OBJS)
-	ar r $@ $(MADDEC_OBJS)
-
-maddec: main.o libmaddec.a
+maddec: main.o libmaddec.so
 	$(CC) -g -o $@ main.o $(LDFLAGS) -L. -lmaddec -lmad -lm
 
 clean:

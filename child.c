@@ -17,6 +17,7 @@
 #include <mad.h>
 
 #include "maddec.h"
+#include "maddec_internal.h"
 #include "error.h"
 #include "misc.h"
 
@@ -38,7 +39,7 @@ void mp3dec_child_reset(child_state_t *state, int cmd_fd, int response_fd) {
   state->cmd_fd = cmd_fd;
   state->response_fd = response_fd;
   
-  mp3dec_error_reset(&state->error);
+  error_reset(&state->error);
 
   state->state = CHILD_NONE;
   state->nchannels = 0;
@@ -96,14 +97,14 @@ static int mp3dec_audio_init(child_state_t *state) {
   if (state->snd_fd < 0) {
     state->snd_fd = open("/dev/dsp", O_RDWR);
     if (state->snd_fd < 0) {
-      mp3dec_error_set_strerror(&state->error, "Could not open sound device");
+      error_set_strerror(&state->error, "Could not open sound device");
       return -1;
     }
   }
     
   ret = ioctl(state->snd_fd, SNDCTL_DSP_RESET, NULL);
   if (ret < 0) {
-    mp3dec_error_set_strerror(&state->error, "Could not reset audio");
+    error_set_strerror(&state->error, "Could not reset audio");
     goto error;
   }
 
@@ -111,21 +112,21 @@ static int mp3dec_audio_init(child_state_t *state) {
   fmts = AFMT_S16_NE;
   ret = ioctl(state->snd_fd, SNDCTL_DSP_SETFMT, &fmts);
   if ((fmts != AFMT_S16_NE) || (ret < 0)) {
-    mp3dec_error_set_strerror(&state->error, "Could not set format");
+    error_set_strerror(&state->error, "Could not set format");
     goto error;
   }
   
   channels = state->nchannels;
   ret = ioctl(state->snd_fd, SNDCTL_DSP_STEREO, &channels);
   if (ret < 0) {
-    mp3dec_error_set_strerror(&state->error, "Could not set stereo mode");
+    error_set_strerror(&state->error, "Could not set stereo mode");
     goto error;
   }
 
   rate = state->samplerate;
   ret = ioctl(state->snd_fd, SNDCTL_DSP_SPEED, &rate);
   if (ret < 0) {
-    mp3dec_error_set_strerror(&state->error, "Could not set samplerate");
+    error_set_strerror(&state->error, "Could not set samplerate");
     goto error;
   }
 
@@ -191,7 +192,7 @@ enum mad_flow mad_input(void *data, struct mad_stream *stream) {
 		  sizeof(state->mp3data) - state->mp3len);
   
   if (ret < 0) {
-    mp3dec_error_set_strerror(&state->error, "Could not read from the mp3 file");
+    error_set_strerror(&state->error, "Could not read from the mp3 file");
     state->state = CHILD_ERROR;
     return MAD_FLOW_BREAK;
     
@@ -245,7 +246,7 @@ enum mad_flow mad_output(void *data, struct mad_header const *header,
     state->samplerate = pcm->samplerate;
 
     if (mp3dec_audio_init(state) < 0) {
-      mp3dec_error_set(&state->error, "Could not initialize audio");
+      error_set(&state->error, "Could not initialize audio");
       state->state = CHILD_ERROR;
       return MAD_FLOW_BREAK;
     }
@@ -270,7 +271,7 @@ enum mad_flow mad_output(void *data, struct mad_header const *header,
 
   len = ptr - audio_buf;
   if (unix_write(state->snd_fd, audio_buf, len) != len) {
-    mp3dec_error_set_strerror(&state->error, "Could not write audio data to soundcard");
+    error_set_strerror(&state->error, "Could not write audio data to soundcard");
     state->state = CHILD_ERROR;
     return MAD_FLOW_BREAK;
   } else {
@@ -315,7 +316,7 @@ int mp3dec_child_read_cmd(child_state_t *state) {
     case CHILD_ERROR:
       goto error;
     case CHILD_NONE:
-      mp3dec_error_set(&state->error, "Cannot play: no track loaded");
+      error_set(&state->error, "Cannot play: no track loaded");
       goto error;
     case CHILD_PAUSE:
     case CHILD_STOP:
@@ -324,7 +325,7 @@ int mp3dec_child_read_cmd(child_state_t *state) {
       mad_decoder_run(&state->decoder, MAD_DECODER_MODE_SYNC);
       return 0;
     default:
-      mp3dec_error_set(&state->error, "Cannot play: unknown state");
+      error_set(&state->error, "Cannot play: unknown state");
       goto error;
     }
     break;
@@ -345,7 +346,7 @@ int mp3dec_child_read_cmd(child_state_t *state) {
       state->state = CHILD_PLAY;
       goto ack;
     } else {
-      mp3dec_error_set(&state->error, "Cannot pause when not playing or paused");
+      error_set(&state->error, "Cannot pause when not playing or paused");
       goto error;
     }
   }
@@ -366,7 +367,7 @@ int mp3dec_child_read_cmd(child_state_t *state) {
     assert(state->mp3_fd == -1);
     state->mp3_fd = open(buf, O_RDONLY); /* XXX receive string correctly */
     if (state->mp3_fd < 0) {
-      mp3dec_error_set_strerror(&state->error, "Could not open the mp3 file");
+      error_set_strerror(&state->error, "Could not open the mp3 file");
       state->state = CHILD_ERROR;
       goto error;
     } else {
@@ -378,7 +379,7 @@ int mp3dec_child_read_cmd(child_state_t *state) {
   }
 
   case MP3DEC_COMMAND_STATUS: {
-    mp3dec_error_set(&state->error, "STATUS not supported");
+    error_set(&state->error, "STATUS not supported");
     goto error;
     break;
   }
@@ -387,7 +388,7 @@ int mp3dec_child_read_cmd(child_state_t *state) {
     ret = mp3dec_write_cmd(state->response_fd, MP3DEC_RESPONSE_PONG,
 			   buf, buflen, &state->error);
     if (ret < 0) {
-      mp3dec_error_prepend(&state->error, "Could not send PONG");
+      error_prepend(&state->error, "Could not send PONG");
       return -1;
     } else {
       return 0;
@@ -396,25 +397,26 @@ int mp3dec_child_read_cmd(child_state_t *state) {
   }
 
   default:
-    mp3dec_error_set(&state->error, "Unknown command received");
+    error_set(&state->error, "Unknown command received");
     goto error;
   }
 
  ack:
   ret = mp3dec_write_cmd(state->response_fd, MP3DEC_RESPONSE_ACK, NULL, 0, &state->error);
   if (ret < 0) {
-    mp3dec_error_prepend(&state->error, "Could not send ACK");
+    error_prepend(&state->error, "Could not send ACK");
     return -1;
   } else {
     return 0;
   }
   
  error:
-  ret = mp3dec_write_cmd_string(state->response_fd, MP3DEC_RESPONSE_ERR, mp3dec_error(&state->error),
+  ret = mp3dec_write_cmd_string(state->response_fd, MP3DEC_RESPONSE_ERR,
+				error_get(&state->error),
 				&state->error);
 
   if (ret < 0) {
-    mp3dec_error_prepend(&state->error, "Could not send ERROR");
+    error_prepend(&state->error, "Could not send ERROR");
     return -1;
   } else {
     return 0;
@@ -449,7 +451,7 @@ int mp3dec_decode_file(mp3dec_state_t *state, char *filename) {
 
   state->mp3_fd = open(filename, O_RDONLY);
   if (state->mp3_fd < 0) {
-    mp3dec_error_set_strerror(state, "Could not open the mp3 file");
+    error_set_strerror(state, "Could not open the mp3 file");
     return -1;
   }
 
