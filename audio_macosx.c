@@ -46,23 +46,15 @@ static OSStatus audio_play_proc(AudioDeviceID inDevice,
   for(i = 0; i < outOutputData->mNumberBuffers; i++) {
     AudioBuffer *buffer = outOutputData->mBuffers + i;
 
-    /*
-      printf("handling data %d, size %d, channels %d\n",
-      i, buffer->mDataByteSize / sizeof(float),
-      buffer->mNumberChannels);
-    */
-
     if ((buffer->mDataByteSize / sizeof(float)) != (1152 * 2)) {
-      printf("Incorrect buffer size: %d\n", buffer->mDataByteSize / sizeof(float));
+      memset(buffer->mData, 0, 1152 * 2 * sizeof(float));
       continue;
     }
 
     int ret;
     ret = rb_dequeue(&audio.rb, buffer->mData, 1152 * 2);
-    if (ret == 0) {
-      printf("Could not dequeue\n");
+    if (ret == 0)
       memset(buffer->mData, 0, 1152 * 2 * sizeof(float));
-    }
   }
 
   return 0;
@@ -139,6 +131,22 @@ float mad_scale_float(mad_fixed_t sample) {
   return (float)(sample/(float)(1L << MAD_F_FRACBITS));
 }
 
+static inline
+signed int mad_scale(mad_fixed_t sample)
+{
+  /* round */
+  sample += (1L << (MAD_F_FRACBITS - 16));
+
+  /* clip */
+  if (sample >= MAD_F_ONE)
+    sample = MAD_F_ONE - 1;
+  else if (sample < -MAD_F_ONE)
+    sample = -MAD_F_ONE;
+
+  /* quantize */
+  return sample >> (MAD_F_FRACBITS + 1 - 16);
+}
+
 int audio_write(struct mad_pcm *pcm, error_t *error) {
   if (!audio_initialized) {
     audio.channels = pcm->channels;
@@ -175,8 +183,9 @@ int audio_write(struct mad_pcm *pcm, error_t *error) {
   left_ch  = pcm->samples[0];
   right_ch = pcm->samples[1];
   for (i = 0; i < pcm->length; i++) {
-    *ptr++ = mad_scale_float(*left_ch++);
-    *ptr++ = mad_scale_float(*right_ch++);
+    signed int sample;
+    *ptr++ = mad_scale(*left_ch++) / 32768.0;
+    *ptr++ = mad_scale(*right_ch++) / 32768.0;
   }
   ret = rb_enqueue(&audio.rb, buf, 1152 * pcm->channels);
 
@@ -186,7 +195,6 @@ int audio_write(struct mad_pcm *pcm, error_t *error) {
   }
 
   if (!audio_started) {
-    printf("start audio\n");
     ret = AudioDeviceStart(audio.device, audio_play_proc);
     if (ret) {
       error_set(error, "Could not start the audio playback");

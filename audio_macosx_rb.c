@@ -94,7 +94,7 @@ int rb_enqueue(rb_t *rb, rb_elt_t *data, unsigned long count) {
     data += block_length;
   }
 
-  memcpy(rb->buf + end, data, count);
+  memcpy(rb->buf + end, data, count * sizeof(rb_elt_t));
   rb->count += count;
   count -= count;
 
@@ -126,14 +126,14 @@ int rb_dequeue(rb_t *rb, rb_elt_t *dest, unsigned long count) {
 
   unsigned long block_length;
   block_length = min(count, countof(rb->buf) - rb->start);
-  memcpy(dest, rb->buf + rb->start, block_length);
+  memcpy(dest, rb->buf + rb->start, block_length * sizeof(rb_elt_t));
   count -= block_length;
   rb->count -= block_length;
   rb->start = (rb->start + block_length) % countof(rb->buf);
 
   if (count > 0) {
     assert(rb->start == 0);
-    memcpy(dest + block_length, rb->buf, count);
+    memcpy(dest + block_length, rb->buf, count * sizeof(rb_elt_t));
     rb->start += count;
     rb->count -= count;
   }

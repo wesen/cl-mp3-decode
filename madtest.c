@@ -37,7 +37,6 @@ static enum mad_flow mad_input(void *data,
 static enum mad_flow mad_output(void *data,
                                 struct mad_header const *header,
                                 struct mad_pcm *pcm) {
-  buffer_t *buffer = data;
   error_t error;
   if (!audio_write(pcm, &error)) {
     printf("Could not write pcm data: %s\n", error_get(&error));
@@ -77,8 +76,7 @@ static void mad_decode(unsigned char *data, unsigned long size) {
                    NULL /* message */
                    );
 
-  int ret = mad_decoder_run(&decoder, MAD_DECODER_MODE_SYNC);
-
+  mad_decoder_run(&decoder, MAD_DECODER_MODE_SYNC);
   mad_decoder_finish(&decoder);
 
   error_t error;
