@@ -1,5 +1,5 @@
-CFLAGS += -I/usr/local/include -fPIC
-LDFLAGS += -L/usr/local/lib
+CFLAGS += -I/usr/local/include -fPIC -I/sw/include
+LDFLAGS += -L/usr/local/lib -L/sw/lib
 
 CFLAGS += -Wall -g
 
