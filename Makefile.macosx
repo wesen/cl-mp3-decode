@@ -3,16 +3,23 @@ LDFLAGS += -L/usr/local/lib -L/sw/lib
 
 CFLAGS += -Wall -g
 
-all: libmaddec.dylib maddec testaudio
+all: libmaddec.dylib maddec testaudio madtest
 
-MADDEC_OBJS := misc.o error.o maddec.o child.o audio_null.o
+MADDEC_OBJS := misc.o error.o maddec.o child.o \
+               audio_macosx_rb.o audio_macosx.o
 
 libmaddec.dylib: $(MADDEC_OBJS)
 	$(CC) $(LDFLAGS) -dynamiclib \
-              -o libmaddec.dylib $(MADDEC_OBJS) -lm -lmad
+              -o libmaddec.dylib $(MADDEC_OBJS) -lm -lmad \
+	      -framework CoreAudio
 
 maddec: main.o libmaddec.dylib
 	$(CC) -g -o $@ main.o $(LDFLAGS) -L. -lmaddec -lmad -lm
+
+madtest: madtest.o audio_macosx.o audio_macosx_rb.o error.o
+	$(CC) $(LDFLAGS) -o madtest \
+		audio_macosx_rb.o audio_macosx.o madtest.o error.o \
+		-framework CoreAudio -lm -lmad
 
 testaudio: audio_macosx_rb.o audio_macosx.o testaudio.o error.o
 	$(CC) $(LDFLAGS) -o testaudio \

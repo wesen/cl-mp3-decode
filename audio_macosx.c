@@ -32,6 +32,7 @@ typedef struct audio_s {
 
 static audio_t audio;
 static int audio_initialized = 0;
+static int audio_started = 0;
 
 /* audio_play_proc has to be thread safe */
 static OSStatus audio_play_proc(AudioDeviceID inDevice,
@@ -41,11 +42,14 @@ static OSStatus audio_play_proc(AudioDeviceID inDevice,
                                 AudioBufferList *outOutputData,
                                 const AudioTimeStamp *inOutputTime,
                                 void *inClientData) {
+  printf("play_proc\n");
   int ret;
   float *buf = (float *)outOutputData;
   ret = rb_dequeue(&audio.rb, buf, 1152 * 2);
   if (ret == 0)
     memset(buf, 0, 1152 * 2 * sizeof(float));
+  else
+    printf("Could dequeue\n");
   return 0;
 }
 
@@ -138,7 +142,8 @@ int audio_write(struct mad_pcm *pcm, error_t *error) {
   }
 
   if (pcm->length != 1152) {
-    error_set(error, "Unknown number of samples in the mad buffer");
+    error_printf(error, "Unknown number of samples in the mad buffer: %d",
+                 pcm->length);
     return 0;
   }
 
@@ -154,30 +159,50 @@ int audio_write(struct mad_pcm *pcm, error_t *error) {
   mad_fixed_t const *left_ch, *right_ch;
   left_ch  = pcm->samples[0];
   right_ch = pcm->samples[1];
-  for (i = 0; i < sizeof(buf); i++) {
+  for (i = 0; i < pcm->length; i++) {
     *ptr++ = mad_scale_float(*left_ch++);
     *ptr++ = mad_scale_float(*right_ch++);
   }
-  ret = rb_enqueue(&audio.rb, buf, sizeof(buf));
+  ret = rb_enqueue(&audio.rb, buf, 1152 * pcm->channels);
 
   if (ret == 0) {
     error_set(error, "Could not enqueue the PCM samples");
     return 0;
   } else {
-    return 1;
+    printf("enqueue %d samples\n", pcm->length);
   }
+
+  if (!audio_started) {
+    ret = AudioDeviceStart(audio.device, audio_play_proc);
+    if (ret) {
+      error_set(error, "Could not start the audio playback");
+      return 0;
+    }
+    audio_started = 1;
+  }
+
+  return 1;
 }
 
 int audio_close(error_t *error) {
   int ret;
+  if (audio_started) {
+    ret = AudioDeviceStop(audio.device, audio_play_proc);
+    if (ret) {
+      error_set(error, "Could not stop audio playback");
+      return 0;
+    }
+    audio_started = 0;
+  }
   if (audio_initialized) {
     ret = AudioDeviceRemoveIOProc(audio.device, audio_play_proc);
     if (ret) {
       error_set(error, "Could not remove the IOProc");
       return 0;
     }
+    audio_initialized = 0;
   }
   rb_destroy(&audio.rb);
 
-  return 0;
+  return 1;
 }
