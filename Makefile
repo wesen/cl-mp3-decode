@@ -1,17 +1,25 @@
-CFLAGS += -I/usr/local/include -fPIC -I/sw/include
-LDFLAGS += -L/usr/local/lib -L/sw/lib
-
 CFLAGS += -Wall -g
 
-all: libmaddec.so maddec
+# Create dependencies
+%.d: %.c
+	$(CC) -MM $(CFLAGS) $< > $@
+	$(CC) -MM $(CFLAGS) $< | sed s/\\.o/.d/ >> $@
 
-MADDEC_OBJS := misc.o error.o maddec.o child.o audio_null.o
+all: $(LIB_MADDEC) maddec madtest
 
-libmaddec.so: $(MADDEC_OBJS)
+LIB_MADDEC_OBJS := misc.o error.o maddec.o child.o $(AUDIO_OBJS)
+MADDEC_OBJS := main.o
+
+$(OBJS) := $(LIB_MADDEC_OBJS) $(MADDEC_OBJS)
+
+DEPS := $(patsubst %.o,%.d,$(OBJS))
+include $(DEPS)
+
+$(LIB_MADDEC): $(LIB_MADDEC_OBJS)
 	ld $(LDFLAGS) -lm -lmad -shared $(MADDEC_OBJS) -o libmaddec.so
 
-maddec: main.o libmaddec.so
-	$(CC) -g -o $@ main.o $(LDFLAGS) -L. -lmaddec -lmad -lm
+maddec: $(MADDEC_OBJS) $(LIB_MADDEC)
+	$(CC) -g -o $@ $(MADDEC_OBJS) $(LDFLAGS) -L. -lmaddec -lmad -lm
 
 clean:
-	- rm -rf *.o mp3-decode mp3dec maddec *.so *.a
+	- rm -rf *.o maddec $(LIB_MADDEC) *.a
