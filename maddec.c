@@ -18,18 +18,11 @@
 #include "error.h"
 #include "misc.h"
 
-/* commands:
-   - load file
-   - play
-   - stop
-   - status
-   - pause
-*/
-
 /* initializing and stuff */
 
 int mp3dec_child_main(int cmd_fd, int response_fd);
-int mp3dec_start(mp3dec_state_t *state);
+static int mp3dec_start(mp3dec_state_t *state);
+static int mp3dec_exit(mp3dec_state_t *state);
 
 mp3dec_state_t *mp3dec_new(void) {
   mp3dec_state_t *state = malloc(sizeof(mp3dec_state_t));
@@ -58,7 +51,9 @@ void mp3dec_delete(mp3dec_state_t *state) {
   free(state);
 }
 
-int mp3dec_parent_cmd_ack(mp3dec_state_t *state, mp3dec_cmd_e cmd, void *data, unsigned int len) {
+static int mp3dec_parent_cmd_ack(mp3dec_state_t *state,
+				 mp3dec_cmd_e cmd,
+				 void *data, unsigned int len) {
   mp3dec_cmd_e resp;
   unsigned char buf[CMD_BUF_SIZE];
   unsigned int buflen;
@@ -93,7 +88,8 @@ int mp3dec_parent_cmd_ack(mp3dec_state_t *state, mp3dec_cmd_e cmd, void *data, u
   }
 }
 
-int mp3dec_parent_null_cmd_ack(mp3dec_state_t *state, mp3dec_cmd_e cmd) {
+static int mp3dec_parent_null_cmd_ack(mp3dec_state_t *state,
+				      mp3dec_cmd_e cmd) {
   return mp3dec_parent_cmd_ack(state, cmd, NULL, 0);
 }
 
@@ -105,7 +101,7 @@ int mp3dec_pause(mp3dec_state_t *state) {
   return mp3dec_parent_null_cmd_ack(state, MP3DEC_COMMAND_PAUSE);
 }
 
-int mp3dec_exit(mp3dec_state_t *state) {
+static int mp3dec_exit(mp3dec_state_t *state) {
   return mp3dec_parent_null_cmd_ack(state, MP3DEC_COMMAND_EXIT);
 }
 
@@ -149,7 +145,7 @@ int mp3dec_ping(mp3dec_state_t *state) {
   }
 }
 
-int mp3dec_start(mp3dec_state_t *state) {
+static int mp3dec_start(mp3dec_state_t *state) {
   int ret;
   int retval = 0;
   int cmd_fd[2]      = { -1, -1 };

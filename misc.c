@@ -104,6 +104,7 @@ int mp3dec_write_cmd(int fd, mp3dec_cmd_e cmd,
     ptr += len;
   }
   cmd_len = ptr - buf;
+  /* XXX timeout?? */
   if (unix_write(fd, buf, cmd_len) != cmd_len) {
     error_set_strerror(error, "Could not write command to pipe");
     return -1;

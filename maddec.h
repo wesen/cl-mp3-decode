@@ -9,9 +9,9 @@ void mp3dec_delete(mp3dec_state_t *state);
 
 int mp3dec_play(mp3dec_state_t *state);
 int mp3dec_pause(mp3dec_state_t *state);
-int mp3dec_exit(mp3dec_state_t *state);
 int mp3dec_load(mp3dec_state_t *state, char *filename);
 int mp3dec_ping(mp3dec_state_t *state);
+
 char *mp3dec_error(mp3dec_state_t *state);
 
 #endif /* MP3_DECODE_H__ */

@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <stdarg.h>
 
 #include "error.h"
 
@@ -19,8 +20,23 @@ void error_set(error_t *error, char *str) {
   error->strerror[sizeof(error->strerror) - 1] = '\0';
 }
 
+void error_printf(error_t *error, const char *format, ...) {
+  va_list ap;
+  va_start(ap, format);
+  vsnprintf(error->strerror, sizeof(error->strerror), format, ap);
+  va_end(ap);
+}
+
 void error_set_strerror(error_t *error, char *str) {
   snprintf(error->strerror, sizeof(error->strerror), "%s: %s", str, strerror(errno));
+}
+
+void error_printf_strerror(error_t *error, const char *format, ...) {
+  va_list ap;
+  va_start(ap, format);
+  vsnprintf(error->strerror, sizeof(error->strerror), format, ap);
+  error_append(error, strerror(errno));
+  va_end(ap);
 }
 
 void error_append(error_t *error, char *str) {

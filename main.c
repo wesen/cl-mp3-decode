@@ -29,10 +29,12 @@ int main(int argc, char *argv[]) {
 
   static int count = 0;
   for (;;) {
+    printf("pinging\n");
     if (mp3dec_ping(state) < 0) {
       printf("Coudl not ping player: %s\n", mp3dec_error(state));
       break;
     }
+    printf("pinged\n");
     sleep(1);
     count++;
 
@@ -58,9 +60,7 @@ int main(int argc, char *argv[]) {
     }
     if (count == 15) {
       printf("exiting\n");
-      if (mp3dec_exit(state) < 0) {
-	printf("Could not exit player: %s\n", mp3dec_error(state));
-      }
+      break;
     }
   }
   

@@ -21,25 +21,37 @@
 #include "error.h"
 #include "misc.h"
 
-/* commands:
-   - load file
-   - play
-   - stop
-   - status
-   - pause
-*/
-
 static enum mad_flow mad_input(void *data, struct mad_stream *stream);
 static enum mad_flow mad_output(void *data, struct mad_header const *header, struct mad_pcm *pcm);
 static enum mad_flow mad_error(void *data, struct mad_stream *stream, struct mad_frame *frame);
-int mp3dec_child_read_cmd(child_state_t *state);
+static int mp3dec_child_read_cmd(child_state_t *state);
+
+static const char *mp3dec_child_state_str(child_state_t *state) {
+  switch (state->state) {
+  case CHILD_NONE:
+    return "CHILD_NONE";
+  case CHILD_PLAY:
+    return "CHILD_PLAY";
+  case CHILD_ERROR:
+    return "CHILD_ERROR";
+  case CHILD_PAUSE:
+    return "CHILD_PAUSE";
+  case CHILD_STOP:
+    return "CHILD_STOP";
+  default:
+    return "UNKNOWN";
+  }
+}
 
 /* initializing and stuff */
-void mp3dec_child_reset(child_state_t *state, int cmd_fd, int response_fd) {
+static void mp3dec_child_reset(child_state_t *state,
+			       int cmd_fd, int response_fd) {
   state->cmd_fd = cmd_fd;
   state->response_fd = response_fd;
   
   error_reset(&state->error);
+  memset(state->filename, 0, sizeof(state->filename));
+  
 
   state->state = CHILD_NONE;
   state->nchannels = 0;
@@ -59,7 +71,7 @@ void mp3dec_child_reset(child_state_t *state, int cmd_fd, int response_fd) {
   state->mad_initialized = 1;
 }
 
-void mp3dec_child_close(child_state_t *state) {
+static void mp3dec_child_close(child_state_t *state) {
   if (state->mad_initialized) {
     mad_decoder_finish(&state->decoder);
     state->mad_initialized = 0;
@@ -119,14 +131,16 @@ static int mp3dec_audio_init(child_state_t *state) {
   channels = state->nchannels;
   ret = ioctl(state->snd_fd, SNDCTL_DSP_STEREO, &channels);
   if (ret < 0) {
-    error_set_strerror(&state->error, "Could not set stereo mode");
+    error_printf_strerror(&state->error, "Could not enable %d channels",
+			  state->nchannels);
     goto error;
   }
 
   rate = state->samplerate;
   ret = ioctl(state->snd_fd, SNDCTL_DSP_SPEED, &rate);
   if (ret < 0) {
-    error_set_strerror(&state->error, "Could not set samplerate");
+    error_printf_strerror(&state->error, "Could not set samplerate of %d hz",
+			  state->samplerate);
     goto error;
   }
 
@@ -192,7 +206,8 @@ enum mad_flow mad_input(void *data, struct mad_stream *stream) {
 		  sizeof(state->mp3data) - state->mp3len);
   
   if (ret < 0) {
-    error_set_strerror(&state->error, "Could not read from the mp3 file");
+    error_printf_strerror(&state->error, "Could not read from \"%s\"",
+			  mp3dec_child_state_str(state));
     state->state = CHILD_ERROR;
     return MAD_FLOW_BREAK;
     
@@ -233,7 +248,7 @@ enum mad_flow mad_output(void *data, struct mad_header const *header,
       return MAD_FLOW_BREAK;
     }
   }
-  
+
   nchannels = pcm->channels;
   nsamples  = pcm->length;
   left_ch   = pcm->samples[0];
@@ -288,6 +303,7 @@ enum mad_flow mad_error(void *data, struct mad_stream *stream,
 	  stream->error, mad_stream_errorstr(stream),
 	  stream->this_frame - state->mp3data);
 
+  /* XXX check maximum number of resyncs */
   if (unix_check_fd_read(state->cmd_fd)) {
     if (mp3dec_child_read_cmd(state) < 0) {
       state->state = CHILD_ERROR;
@@ -298,15 +314,17 @@ enum mad_flow mad_error(void *data, struct mad_stream *stream,
   return MAD_FLOW_CONTINUE;
 }
 
-int mp3dec_child_read_cmd(child_state_t *state) {
+static int mp3dec_child_read_cmd(child_state_t *state) {
   mp3dec_cmd_e cmd;
   unsigned char buf[CMD_BUF_SIZE];
   unsigned int buflen;
   int ret;
 
+  printf("reading cmd\n");
   ret = mp3dec_read_cmd(state->cmd_fd, &cmd,
 			buf, &buflen, sizeof(buf),
 			&state->error);
+  printf("read: %d, %d\n", ret, cmd);
   if (ret < 0)
     return ret;
 
@@ -325,7 +343,8 @@ int mp3dec_child_read_cmd(child_state_t *state) {
       mad_decoder_run(&state->decoder, MAD_DECODER_MODE_SYNC);
       return 0;
     default:
-      error_set(&state->error, "Cannot play: unknown state");
+      error_printf(&state->error, "Cannot play: unknown state (%d)",
+		   state->state);
       goto error;
     }
     break;
@@ -346,7 +365,8 @@ int mp3dec_child_read_cmd(child_state_t *state) {
       state->state = CHILD_PLAY;
       goto ack;
     } else {
-      error_set(&state->error, "Cannot pause when not playing or paused");
+      error_printf(&state->error, "Cannot pause when in state %s",
+		   mp3dec_child_state_str(state));
       goto error;
     }
   }
@@ -367,12 +387,14 @@ int mp3dec_child_read_cmd(child_state_t *state) {
     assert(state->mp3_fd == -1);
     state->mp3_fd = open(buf, O_RDONLY); /* XXX receive string correctly */
     if (state->mp3_fd < 0) {
-      error_set_strerror(&state->error, "Could not open the mp3 file");
+      error_printf_strerror(&state->error, "Could not open \"%s\"", buf);
       state->state = CHILD_ERROR;
       goto error;
     } else {
       if (state->state == CHILD_NONE)
 	state->state = CHILD_STOP;
+      strncpy(state->filename, buf, sizeof(state->filename));
+      state->filename[sizeof(state->filename) - 1] = '\0';
       goto ack;
     }
     break;
@@ -385,6 +407,7 @@ int mp3dec_child_read_cmd(child_state_t *state) {
   }
 
   case MP3DEC_COMMAND_PING: {
+    printf("pong\n");
     ret = mp3dec_write_cmd(state->response_fd, MP3DEC_RESPONSE_PONG,
 			   buf, buflen, &state->error);
     if (ret < 0) {
@@ -434,33 +457,7 @@ int mp3dec_child_main(int cmd_fd, int response_fd) {
 	return -1;
       }
     }
+    printf("again\n");
     usleep(50 * 1000);
   }
 }
-
-#if  0 
-int mp3dec_decode_file(mp3dec_state_t *state, char *filename) {
-  int retval = 0;
-  
-  if (state->snd_fd >= 0) {
-    close(state->snd_fd);
-    state->snd_fd = -1;
-  }
-
-  assert(state->mp3_fd == -1);
-
-  state->mp3_fd = open(filename, O_RDONLY);
-  if (state->mp3_fd < 0) {
-    error_set_strerror(state, "Could not open the mp3 file");
-    return -1;
-  }
-
-  retval = mad_decoder_run(&state->decoder, MAD_DECODER_MODE_SYNC);
-
-  close(state->mp3_fd);
-  state->mp3_fd = -1;
-
-  return retval;
-}
-
-#endif
